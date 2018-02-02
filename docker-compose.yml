@@ -1,0 +1,89 @@
+version: '3'
+services:
+  nginx:
+    image: nginx:1.13
+    labels:
+        com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: "true"
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${NGINX_FILES_PATH}/conf.d:/etc/nginx/conf.d
+      - ${NGINX_FILES_PATH}/vhost.d:/etc/nginx/vhost.d
+      - ${NGINX_FILES_PATH}/html:/usr/share/nginx/html
+      - ${NGINX_FILES_PATH}/certs:/etc/nginx/certs:ro
+
+  nginx-gen:
+    image: jwilder/docker-gen:0.7.1
+    command: -notify-sighup nginx -watch -wait 5s:30s /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
+    container_name: nginx-gen
+    restart: unless-stopped
+    volumes:
+      - ${NGINX_FILES_PATH}/conf.d:/etc/nginx/conf.d
+      - ${NGINX_FILES_PATH}/vhost.d:/etc/nginx/vhost.d
+      - ${NGINX_FILES_PATH}/html:/usr/share/nginx/html
+      - ${NGINX_FILES_PATH}/certs:/etc/nginx/certs:ro
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./nginx.tmpl:/etc/docker-gen/templates/nginx.tmpl:ro
+
+  nginx-letsencrypt:
+    image: jrcs/letsencrypt-nginx-proxy-companion:v1.6
+    container_name: nginx-letsencrypt
+    restart: unless-stopped
+    volumes:
+      - ${NGINX_FILES_PATH}/conf.d:/etc/nginx/conf.d
+      - ${NGINX_FILES_PATH}/vhost.d:/etc/nginx/vhost.d
+      - ${NGINX_FILES_PATH}/html:/usr/share/nginx/html
+      - ${NGINX_FILES_PATH}/certs:/etc/nginx/certs:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      NGINX_DOCKER_GEN_CONTAINER: "nginx-gen"
+      NGINX_PROXY_CONTAINER: "nginx"
+
+  confluence:
+    image: 'blacklabelops/confluence:6.5.2'
+    links:
+      - postgresql
+    expose:
+      - 8090
+    restart: always
+    volumes:
+      - '/volumes/backups/:/var/atlassian/confluence/backups'
+    environment:
+      - CONFLUENCE_PROXY_NAME=confluence.your-domain.com
+      - CONFLUENCE_PROXY_PORT=443
+      - CONFLUENCE_PROXY_SCHEME=https
+      - LETSENCRYPT_EMAIL=your@mail.net
+      - LETSENCRYPT_HOST=confluence.your-domain.com
+      - VIRTUAL_HOST=confluence.your-domain.com
+      - VIRTUAL_PORT=8090
+      - DOCKER_WAIT_HOST=postgresql
+      - DOCKER_WAIT_PORT=5432    
+
+  postgresql:
+    environment:
+      - POSTGRES_COLLATE=C
+      - POSTGRES_COLLATE_TYPE=C
+      - POSTGRES_DB=confluencedb
+      - POSTGRES_ENCODING=UTF8
+      - 'POSTGRES_PASSWORD=SuperSecret.Password123?#'
+      - POSTGRES_USER=confluencedb
+    expose:
+      - '5432'
+    image: 'blacklabelops/postgres:9.5.4-r0'
+    labels:
+      com.blacklabelops.description: PostgreSQL Database Server
+      com.blacklabelops.service: postgresql
+      nickname: postgresqldata
+      pid: host
+    restart: always
+    volumes:
+      - /var/lib/postgresql/data
+
+
+networks:
+  default:
+    external:
+      name: webproxy
